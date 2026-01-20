@@ -4,10 +4,23 @@ import os
 from database import create_tables, add_default_admin
 from db_utils import get_connection
 from PIL import Image
+from datetime import datetime
 from datetime import date
 
 # ---------------- SETUP ----------------
 st.set_page_config(page_title="Smart Attendance System", layout="centered")
+
+# Hide Streamlit footer and menu
+hide_streamlit_style = """
+<style>
+/* Hide main menu (hamburger) */
+#MainMenu {visibility: hidden;}
+
+/* Hide footer */
+footer {visibility: hidden;}
+</style>
+"""
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
 # Initialize DB
 create_tables()
