@@ -11,16 +11,20 @@ from datetime import date
 st.set_page_config(page_title="Smart Attendance System", layout="centered")
 
 # Hide Streamlit header, menu, and footer
+# Hide everything Streamlit adds (header, footer, menu, mobile footer)
 hide_streamlit_style = """
 <style>
-/* Hide top header bar (with Streamlit branding/Git info) */
-header {visibility: hidden; height: 0px;}
+/* Top header */
+header {display: none !important;}
 
-/* Hide hamburger menu */
-#MainMenu {visibility: hidden; height: 0px;}
+/* Hamburger menu */
+#MainMenu {display: none !important;}
 
-/* Hide footer */
-footer {visibility: hidden; height: 0px;}
+/* Footer (desktop + mobile) */
+footer, footer div, .css-18ni7ap {display: none !important;}
+
+/* Extra mobile sticky footer */
+[data-testid="stAppViewContainer"] > div:last-child {display: none !important;}
 </style>
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
