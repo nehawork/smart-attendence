@@ -3,10 +3,7 @@ import pandas as pd
 import os
 from database import create_tables, add_default_admin
 from db_utils import get_connection
-from datetime import datetime
-import face_recognition
 from PIL import Image
-import numpy as np
 from datetime import date
 
 # ---------------- SETUP ----------------

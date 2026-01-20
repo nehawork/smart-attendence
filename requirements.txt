@@ -1,7 +1,7 @@
 streamlit==1.30.0
 pandas==1.5.3
 xlsxwriter
-opencv-python
-face_recognition
+opencv-python-headless
+deepface
 numpy
 Pillow
