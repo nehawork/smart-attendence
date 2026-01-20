@@ -1,2 +1,4 @@
 cmake
-boost
+build-essential
+g++
+libboost-all-dev
