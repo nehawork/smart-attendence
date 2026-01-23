@@ -1,624 +1,656 @@
+"""
+Smart Attendance System - Main Application
+Refactored following SOLID principles with separate services
+"""
+
 import streamlit as st
 import pandas as pd
-import os
+from datetime import datetime, date
+
+# Import services and utilities
 from database import create_tables, add_default_admin
-from db_utils import get_connection
-from PIL import Image
-from datetime import datetime
-from datetime import date
+from services import (
+    AuthService,
+    StudentService,
+    AttendanceService,
+    LeaveService,
+    Styles,
+    UIComponents
+)
 
-# ---------------- SETUP ----------------
-st.set_page_config(page_title="Smart Attendance System", layout="centered")
 
-# Hide Streamlit header, menu, and footer
-# Hide everything Streamlit adds (header, footer, menu, mobile footer)
-hide_streamlit_style = """
-<style>
-/* Top header */
-header {display: none !important;}
+# ============================================================================
+# APPLICATION INITIALIZATION
+# ============================================================================
 
-/* Hamburger menu */
-#MainMenu {display: none !important;}
+def initialize_app():
+    """Initialize the application"""
+    Styles.configure_page()
+    Styles.apply_styles()
+    create_tables()
+    add_default_admin()
 
-/* Footer (desktop + mobile) */
-footer, footer div, .css-18ni7ap {display: none !important;}
 
-/* Extra mobile sticky footer */
-[data-testid="stAppViewContainer"] > div:last-child {display: none !important;}
-</style>
-"""
-st.markdown(hide_streamlit_style, unsafe_allow_html=True)
-
-# Initialize DB
-create_tables()
-add_default_admin()
-
-os.makedirs("student_images", exist_ok=True)
-
-# ---------------- SESSION STATE ----------------
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-    st.session_state.role = None
+def init_session_state():
+    """Initialize session state variables"""
+    if "logged_in" not in st.session_state:
+        st.session_state.logged_in = False
+        st.session_state.role = None
+        st.session_state.username = None
 
 
 def logout():
+    """Logout user"""
     st.session_state.logged_in = False
     st.session_state.role = None
+    st.session_state.username = None
     st.experimental_rerun()
 
-# ---------------- LOGIN PAGE ----------------
-if not st.session_state.logged_in:
-    st.title("🏫 Smart Attendance System")
-    st.subheader("Login")
 
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
+# ============================================================================
+# LOGIN PAGE
+# ============================================================================
 
-    if st.button("Login"):
-        conn = get_connection()
-        c = conn.cursor()
-        c.execute(
-            "SELECT role FROM users WHERE username=? AND password=?",
-            (username, password)
-        )
-        result = c.fetchone()
-        conn.close()
+def handle_login(username: str, password: str):
+    """Handle user login"""
+    if not username or not password:
+        UIComponents.render_error_message("❌ Please enter both username and password")
+        return
 
-        if result:
-            st.session_state.logged_in = True
-            st.session_state.role = result[0]
-            st.success("Login successful")
-            st.experimental_rerun()
-        else:
-            st.error("Invalid username or password")
+    role = AuthService.authenticate_user(username, password)
 
-# ---------------- ADMIN DASHBOARD ----------------
-if st.session_state.logged_in and st.session_state.role == "admin":
+    if role:
+        st.session_state.logged_in = True
+        st.session_state.role = role
+        st.session_state.username = username
+        UIComponents.render_success_message("✅ Login successful! Redirecting...")
+        st.experimental_rerun()
+    else:
+        UIComponents.render_error_message("❌ Invalid username or password")
 
-    # ---------------- ADMIN DASHBOARD HEADER ----------------
-    if st.session_state.logged_in and st.session_state.role == "admin":
 
-        col1, col2 = st.columns([4, 1])  # title takes 4 parts, button 1 part
-        with col1:
-            st.title("🧑‍💼 Admin Dashboard")
-        with col2:
-            if st.button("🔒 Logout"):
-                logout()
+def render_login_page():
+    """Render the login page"""
+    if not st.session_state.logged_in:
+        UIComponents.render_login_page(handle_login)
 
-    tab1, tab2, tab3, tab4 = st.tabs(
-        ["👩‍🏫 Teachers", "👨‍🎓 Students", "📊 Attendance Report", "🗓️ Leave Report"]
-    )
 
-    # ---------- TEACHERS TAB ----------
-    with tab1:
-        st.subheader("Manage Teachers")
+# ============================================================================
+# ADMIN DASHBOARD - TEACHERS TAB
+# ============================================================================
 
-        # Initialize session state
-        if "show_add_teacher" not in st.session_state:
-            st.session_state.show_add_teacher = False
-        if "teacher_message" not in st.session_state:
-            st.session_state.teacher_message = ""
+def render_admin_teachers_tab():
+    """Render admin teachers management tab"""
+    UIComponents.render_section_title("Manage Teachers")
 
-        # Button to open Add Teacher form
-        if st.button("➕ Add Teacher"):
-            st.session_state.show_add_teacher = True
-            st.session_state.teacher_message = ""  # reset message
+    # Initialize session state for add teacher form
+    if "show_add_teacher" not in st.session_state:
+        st.session_state.show_add_teacher = False
+    if "teacher_message" not in st.session_state:
+        st.session_state.teacher_message = ""
 
-        # Modal-like form
-        if st.session_state.show_add_teacher:
-            with st.expander("Add New Teacher", expanded=True):
-                with st.form("add_teacher_form", clear_on_submit=True):
-                    t_username = st.text_input("Teacher Username")
-                    t_password = st.text_input("Teacher Password", type="password")
+    # Add teacher button
+    if UIComponents.render_add_button("➕ Add New Teacher"):
+        st.session_state.show_add_teacher = True
+        st.session_state.teacher_message = ""
 
-                    col1, col2 = st.columns(2)
-                    submit = col1.form_submit_button("Save Teacher")
-                    cancel = col2.form_submit_button("Cancel")
+    # Add teacher form
+    if st.session_state.show_add_teacher:
+        with st.expander("📝 Add New Teacher", expanded=True):
+            with st.form("add_teacher_form", clear_on_submit=True):
+                t_username = st.text_input(
+                    "Username",
+                    placeholder="Enter teacher username",
+                    label_visibility="collapsed"
+                )
+                t_password = st.text_input(
+                    "Password",
+                    type="password",
+                    placeholder="Enter password",
+                    label_visibility="collapsed"
+                )
 
-                    if submit:
-                        if not t_username or not t_password:
-                            st.warning("Please fill all fields")
+                col1, col2 = st.columns(2)
+                submit = col1.form_submit_button("✅ Save", use_container_width=True)
+                cancel = col2.form_submit_button("❌ Cancel", use_container_width=True)
+
+                if submit:
+                    if not t_username or not t_password:
+                        UIComponents.render_warning_message("Please fill all fields")
+                    else:
+                        success, message = AuthService.add_teacher(t_username, t_password)
+                        if success:
+                            st.session_state.teacher_message = "success"
+                            st.session_state.show_add_teacher = False
+                            st.experimental_rerun()
                         else:
-                            try:
-                                conn = get_connection()
-                                c = conn.cursor()
-                                c.execute(
-                                    "INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
-                                    (t_username, t_password, "teacher")
-                                )
-                                conn.commit()
-                                conn.close()
+                            UIComponents.render_error_message(f"⚠️ {message}")
 
-                                # Set message in session state
-                                st.session_state.teacher_message = "success"
+                if cancel:
+                    st.session_state.show_add_teacher = False
+                    st.session_state.teacher_message = ""
+                    st.experimental_rerun()
 
-                                # Close form
-                                st.session_state.show_add_teacher = False
-                                st.experimental_rerun()
-                            except Exception as e:
-                                if "UNIQUE constraint failed" in str(e):
-                                    st.session_state.teacher_message = "exists"
-                                else:
-                                    st.session_state.teacher_message = "error"
+    # Show messages
+    if st.session_state.teacher_message == "success":
+        UIComponents.render_success_message("✅ Teacher added successfully!")
+        st.session_state.teacher_message = ""
 
-                    if cancel:
-                        st.session_state.show_add_teacher = False
-                        st.session_state.teacher_message = ""
-                        st.experimental_rerun()
+    # Display teachers list
+    UIComponents.render_subsection_title("📋 Teacher List")
+    teachers = AuthService.get_all_teachers()
 
-        # Show the message AFTER rerun
-        if st.session_state.teacher_message == "success":
-            st.success("Teacher added successfully")
-            st.session_state.teacher_message = ""  # clear after showing
-        elif st.session_state.teacher_message == "exists":
-            st.error("Username already exists")
-            st.session_state.teacher_message = ""  # clear after showing
-
-        # Show existing teachers
-        conn = get_connection()
-        teachers_df = pd.read_sql("SELECT id, username FROM users WHERE role='teacher'", conn)
-        conn.close()
-        st.dataframe(teachers_df)
+    if not teachers:
+        UIComponents.render_info_message("No teachers added yet. Click 'Add New Teacher' to get started.")
+    else:
+        teachers_df = pd.DataFrame(teachers, columns=["ID", "Username"])
+        st.dataframe(teachers_df, use_container_width=True, hide_index=True)
 
 
-        # ---------- STUDENTS TAB ----------
-        with tab2:
-            st.subheader("Manage Students")
-            if "show_add_student" not in st.session_state:
-                st.session_state.show_add_student = False
+# ============================================================================
+# ADMIN DASHBOARD - STUDENTS TAB
+# ============================================================================
 
-            if st.button("➕ Add Student"):
-                st.session_state.show_add_student = True
+def render_admin_students_tab():
+    """Render admin students management tab"""
+    UIComponents.render_section_title("Manage Students")
 
-            if st.session_state.show_add_student:
-                with st.expander("Add New Student", expanded=True):
-                    with st.form("add_student_form", clear_on_submit=True):
-                        name = st.text_input("Student Name")
-                        class_no = st.selectbox("Class", ["9", "10", "11", "12"])
-                        division = st.selectbox("Division", ["A", "B", "C"])
-                        image = st.file_uploader("Upload Student Image", type=["jpg","jpeg","png"])
-                        col1, col2 = st.columns(2)
-                        submit = col1.form_submit_button("Save Student")
-                        cancel = col2.form_submit_button("Cancel")
+    # Initialize session state
+    if "show_add_student" not in st.session_state:
+        st.session_state.show_add_student = False
 
-                        if submit:
-                            if not name or not image:
-                                st.warning("Please fill all fields and upload image")
-                            else:
-                                safe_name = name.replace(" ", "_")
-                                folder = f"student_images/{safe_name}"
-                                os.makedirs(folder, exist_ok=True)
-                                image_path = f"{folder}/{image.name}"
-                                with open(image_path, "wb") as f:
-                                    f.write(image.getbuffer())
+    student_service = StudentService()
 
-                                conn = get_connection()
-                                c = conn.cursor()
-                                c.execute(
-                                    "INSERT INTO students (name, class, division, image_path) VALUES (?, ?, ?, ?)",
-                                    (name, class_no, division, image_path)
-                                )
-                                conn.commit()
-                                conn.close()
+    # Add student button
+    if UIComponents.render_add_button("➕ Add New Student"):
+        st.session_state.show_add_student = True
 
-                                st.success("Student added successfully")
-                                st.session_state.show_add_student = False
-                                st.experimental_rerun()
+    # Add student form
+    if st.session_state.show_add_student:
+        with st.expander("📸 Add New Student", expanded=True):
+            with st.form("add_student_form", clear_on_submit=True):
+                name = st.text_input(
+                    "Name",
+                    placeholder="Enter student name",
+                    label_visibility="collapsed"
+                )
+                col1, col2 = st.columns(2)
+                with col1:
+                    class_no = st.selectbox("Class", ["9", "10", "11", "12"], label_visibility="collapsed")
+                with col2:
+                    division = st.selectbox("Division", ["A", "B", "C"], label_visibility="collapsed")
 
-                        if cancel:
+                image = st.file_uploader(
+                    "Upload Student Photo",
+                    type=["jpg", "jpeg", "png"],
+                    label_visibility="collapsed"
+                )
+
+                col1, col2 = st.columns(2)
+                submit = col1.form_submit_button("✅ Save", use_container_width=True)
+                cancel = col2.form_submit_button("❌ Cancel", use_container_width=True)
+
+                if submit:
+                    if not name or not image:
+                        UIComponents.render_warning_message("Please fill all fields and upload image")
+                    else:
+                        image_path = student_service.save_student_image(name, image)
+                        success, message = StudentService.add_student(name, class_no, division, image_path)
+
+                        if success:
+                            UIComponents.render_success_message("✅ Student added successfully!")
                             st.session_state.show_add_student = False
                             st.experimental_rerun()
+                        else:
+                            UIComponents.render_error_message(f"Error: {message}")
 
-            st.markdown("### Student List")
-            conn = get_connection()
-            students = conn.execute(
-                "SELECT name, class, division, image_path FROM students"
-            ).fetchall()
-            conn.close()
+                if cancel:
+                    st.session_state.show_add_student = False
+                    st.experimental_rerun()
 
-            for s in students:
-                col1, col2 = st.columns([1,3])
+    # Display students list
+    UIComponents.render_subsection_title("👥 Student List")
+    students = StudentService.get_all_students()
+
+    if not students:
+        UIComponents.render_info_message("No students added yet. Click 'Add New Student' to get started.")
+    else:
+        for student in students:
+            sid, name, class_no, division, image_path = student
+            col1, col2, col3 = st.columns([1, 3, 1])
+
+            with col1:
+                if image_path:
+                    try:
+                        st.image(image_path, width=70)
+                    except:
+                        st.markdown("📷")
+                else:
+                    st.markdown("📷")
+
+            with col2:
+                st.markdown(f"**{name}**")
+                st.caption(f"Class {class_no}-{division}")
+
+            st.markdown("---")
+
+
+# ============================================================================
+# ADMIN DASHBOARD - ATTENDANCE TAB
+# ============================================================================
+
+def render_admin_attendance_tab():
+    """Render admin attendance reporting tab"""
+    UIComponents.render_section_title("Attendance Summary")
+
+    summary_df = AttendanceService.get_attendance_summary()
+
+    if summary_df.empty:
+        UIComponents.render_info_message("📭 No attendance records found yet.")
+    else:
+        UIComponents.render_subsection_title("📊 Attendance Records")
+
+        for idx, row in summary_df.iterrows():
+            with st.container():
+                col1, col2, col3, col4, col5 = st.columns([2, 2, 1.2, 1.2, 1])
+
                 with col1:
-                    if s[3]:
-                        st.image(s[3], width=80)
+                    st.markdown(f"**{row['date']}**")
                 with col2:
-                    st.write(f"**Name:** {s[0]}")
-                    st.write(f"**Class:** {s[1]} - {s[2]}")
-                    st.markdown("---")
+                    st.markdown(f"{row['Class & Division']}")
+                with col3:
+                    st.markdown(f"✅ {row['Present']}")
+                with col4:
+                    st.markdown(f"❌ {row['Absent']}")
+                with col5:
+                    if st.button("👁️", key=f"view_{row['date']}_{row['Class & Division']}"):
+                        detail_df = AttendanceService.get_attendance_detail(
+                            row['date'],
+                            row['Class & Division']
+                        )
+                        st.dataframe(detail_df, use_container_width=True, hide_index=True)
 
-        # ---------- ATTENDANCE REPORT TAB ----------
+            st.markdown("<hr style='margin: 8px 0;'>", unsafe_allow_html=True)
+
+
+# ============================================================================
+# ADMIN DASHBOARD - LEAVE TAB
+# ============================================================================
+
+def render_admin_leave_tab():
+    """Render admin leave reports tab"""
+    UIComponents.render_section_title("Leave Management")
+
+    leave_service = LeaveService()
+    df_leave = leave_service.get_all_leave_records()
+
+    if df_leave.empty:
+        UIComponents.render_info_message("📭 No leave records found.")
+    else:
+        # Filters
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            selected_class = st.selectbox(
+                "Class",
+                ["All"] + leave_service.get_classes_with_leaves(),
+                key="admin_leave_class",
+                label_visibility="collapsed"
+            )
+
+        with col2:
+            divisions = (
+                ["All"] if selected_class == "All"
+                else ["All"] + leave_service.get_divisions_for_class(selected_class)
+            )
+            selected_division = st.selectbox(
+                "Division",
+                divisions,
+                key="admin_leave_division",
+                label_visibility="collapsed"
+            )
+
+        with col3:
+            students = (
+                ["All"] if selected_class == "All" or selected_division == "All"
+                else ["All"] + leave_service.get_students_for_class_division(selected_class, selected_division)
+            )
+            selected_student = st.selectbox(
+                "Student",
+                students,
+                key="admin_leave_student",
+                label_visibility="collapsed"
+            )
+
+        # Filter data
+        df_filtered = leave_service.filter_leave_records(
+            selected_class if selected_class != "All" else None,
+            selected_division if selected_division != "All" else None,
+            selected_student if selected_student != "All" else None
+        )
+
+        # Download button
+        col1, col2 = st.columns([3, 1])
+        with col2:
+            excel_data = leave_service.export_to_excel(df_filtered)
+            st.download_button(
+                label="📥 Download",
+                data=excel_data,
+                file_name="leave_report.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+
+        # Display table
+        UIComponents.render_subsection_title("📋 Leave Records")
+        st.dataframe(df_filtered, use_container_width=True, hide_index=True)
+
+
+# ============================================================================
+# ADMIN DASHBOARD
+# ============================================================================
+
+def render_admin_dashboard():
+    """Render admin dashboard"""
+    if st.session_state.logged_in and st.session_state.role == "admin":
+        UIComponents.render_dashboard_header("🧑‍💼 Admin Panel", logout)
+
+        tab1, tab2, tab3, tab4 = st.tabs(
+            ["👩‍🏫 Teachers", "👨‍🎓 Students", "📊 Attendance", "🗓️ Leaves"]
+        )
+
+        with tab1:
+            render_admin_teachers_tab()
+
+        with tab2:
+            render_admin_students_tab()
+
         with tab3:
-            # Fetch all attendance data with student info
-            conn = get_connection()
-            df = pd.read_sql("""
-                SELECT a.date, s.class, s.division, s.name, a.status
-                FROM attendance a
-                JOIN students s ON a.student_id = s.id
-            """, conn)
-            conn.close()
-
-            if df.empty:
-                st.info("No attendance records found.")
-            else:
-                # Create a new column combining Class + Division
-                df["Class & Division"] = df["class"] + " - " + df["division"]
-
-                # Aggregate summary: Present / Absent counts per date & class
-                summary = df.groupby(["date", "Class & Division"])["status"].value_counts().unstack(fill_value=0).reset_index()
-                if "Present" not in summary.columns:
-                    summary["Present"] = 0
-                if "Absent" not in summary.columns:
-                    summary["Absent"] = 0
-
-                # Display as a table with headers
-                st.markdown("### Attendance Summary")
-                for idx, row in summary.iterrows():
-                    col1, col2, col3, col4, col5, col6 = st.columns([2, 2, 1, 1, 1, 1])
-                    col1.markdown("**Date**")
-                    col2.markdown("**Class & Division**")
-                    col3.markdown("**Present**")
-                    col4.markdown("**Absent**")
-                    col5.markdown("")  # placeholder
-                    col6.markdown("")  # placeholder
-
-                    # Display row data
-                    col1.write(row["date"])
-                    col2.write(row["Class & Division"])
-                    col3.write(row["Present"])
-                    col4.write(row["Absent"])
-
-                    # View button for details
-                    if col6.button("View", key=f"view_{row['date']}_{row['Class & Division']}"):
-                        detail_df = df[(df["date"] == row["date"]) & (df["Class & Division"] == row["Class & Division"])]
-                        st.markdown(f"### Details for {row['Class & Division']} on {row['date']}")
-                        st.dataframe(detail_df[["name", "status"]])
-
+            render_admin_attendance_tab()
 
         with tab4:
-            # ---------- HEADER ----------
-            col1, col2 = st.columns([4, 1])
-            with col1:
-                st.subheader("View Leave Reports")
-
-            # ---------- LOAD DATA ----------
-            conn = get_connection()
-            df_leave = pd.read_sql("SELECT * FROM leave_records", conn)
-            conn.close()
-
-            if df_leave.empty:
-                st.info("No leave records found.")
-            else:
-                # ---------- FILTERS ----------
-                col1, col2, col3 = st.columns(3)
-
-                with col1:
-                    selected_class = st.selectbox(
-                        "Filter by Class",
-                        ["All"] + sorted(df_leave["class"].unique().tolist()),
-                        key="admin_leave_class"
-                    )
-
-                # Division depends on class
-                with col2:
-                    if selected_class == "All":
-                        divisions = ["All"]
-                    else:
-                        divisions = ["All"] + sorted(
-                            df_leave[df_leave["class"] == selected_class]["division"].unique().tolist()
-                        )
-
-                    selected_division = st.selectbox(
-                        "Filter by Division",
-                        divisions,
-                        key="admin_leave_division"
-                    )
-
-                # Student depends on class + division
-                with col3:
-                    filtered_students_df = df_leave.copy()
-
-                    if selected_class != "All":
-                        filtered_students_df = filtered_students_df[
-                            filtered_students_df["class"] == selected_class
-                        ]
-
-                    if selected_division != "All":
-                        filtered_students_df = filtered_students_df[
-                            filtered_students_df["division"] == selected_division
-                        ]
-
-                    students = ["All"] + sorted(
-                        filtered_students_df["student_name"].unique().tolist()
-                    )
-
-                    selected_student = st.selectbox(
-                        "Filter by Student",
-                        students,
-                        key="admin_leave_student"
-                    )
-
-                # ---------- APPLY FILTERS ----------
-                df_filtered = df_leave.copy()
-
-                if selected_class != "All":
-                    df_filtered = df_filtered[df_filtered["class"] == selected_class]
-
-                if selected_division != "All":
-                    df_filtered = df_filtered[df_filtered["division"] == selected_division]
-
-                if selected_student != "All":
-                    df_filtered = df_filtered[df_filtered["student_name"] == selected_student]
-
-                # ---------- DOWNLOAD BUTTON (FILTERED DATA) ----------
-                with col2:
-                    import io
-
-                    def convert_df_to_excel(df):
-                        output = io.BytesIO()
-                        with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-                            df.to_excel(writer, index=False, sheet_name="Leave Report")
-                        return output.getvalue()
-
-                    excel_data = convert_df_to_excel(df_filtered)
-
-                    st.download_button(
-                        label="📥 Download",
-                        data=excel_data,
-                        file_name="leave_report.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-
-                # ---------- TABLE ----------
-                st.markdown("### Leave Records")
-                st.dataframe(df_filtered, use_container_width=True)
-
-        st.button("Logout", on_click=logout)
-
-# ---------------- TEACHER DASHBOARD ----------------
-if st.session_state.logged_in and st.session_state.role == "teacher":
-
-    # ---------------- TEACHER DASHBOARD HEADER ----------------
-    col1, col2 = st.columns([4, 1])
-    with col1:
-        st.title("👩‍🏫 Teacher Dashboard")
-    with col2:
-        if st.button("🔒 Logout"):
-            logout()
-
-    # ---------------- TEACHER TABS ----------------
-    tab1, tab2, tab3 = st.tabs(["📝 Take Attendance", "🗓️ Add Leave", "📊 View Attendance"])
-
-    # ---------- TAB 1: Take Attendance ----------
-    with tab1:
-
-        # ---------- Take Attendance ----------
-        st.subheader("Take Attendance")
-
-        # Fetch classes and divisions dynamically from students table
-        conn = get_connection()
-        students = conn.execute("SELECT DISTINCT class, division FROM students").fetchall()
-        conn.close()
-
-        if not students:
-            st.warning("No students found. Please add students first.")
-        else:
-            # Build Class & Division dropdown
-            class_div_list = [f"{c[0]} - {c[1]}" for c in students]
-            selected_class_div = st.selectbox("Select Class & Division", class_div_list)
-
-            selected_class, selected_division = selected_class_div.split(" - ")
-
-            # Upload classroom image
-            uploaded_file = st.file_uploader("Upload Classroom Image", type=["jpg", "jpeg", "png"])
-
-            if uploaded_file and st.button("📸 Take Attendance"):
-                # For demo, simulate attendance marking without face recognition
-                # Fetch students for selected class & division
-                conn = get_connection()
-                student_rows = conn.execute(
-                    "SELECT id, name FROM students WHERE class=? AND division=?",
-                    (selected_class, selected_division)
-                ).fetchall()
-                conn.close()
-
-                if not student_rows:
-                    st.warning("No students found for this class & division.")
-                else:
-                    # Simulate: mark all students present (or randomize if desired)
-                    marked_students_list = []
-                    today = str(date.today())
-                    for sid, sname in student_rows:
-                        status = "Present"  # or "Absent" for demo/random
-                        marked_students_list.append((sid, selected_class, selected_division, status))
-
-                    # Save to attendance table
-                    conn = get_connection()
-                    c = conn.cursor()
-                    for sid, class_name, division, status in marked_students_list:
-                        c.execute("""
-                            INSERT INTO attendance (student_id, class, division, date, status)
-                            VALUES (?, ?, ?, ?, ?)
-                        """, (sid, class_name, division, today, status))
-                    conn.commit()
-                    conn.close()
-
-                    st.success(f"Attendance marked for {len(marked_students_list)} students.")
-                    st.dataframe(pd.DataFrame(marked_students_list, columns=["Student ID", "Class", "Division", "Status"]))
+            render_admin_leave_tab()
 
 
+# ============================================================================
+# TEACHER DASHBOARD - MARK ATTENDANCE TAB
+# ============================================================================
 
-    # ---------- TAB 2: Add Leave ----------
-    with tab2:
-        st.subheader("Add Leave Record")
+def render_teacher_mark_attendance_tab():
+    """Render teacher attendance marking tab"""
+    UIComponents.render_section_title("Mark Class Attendance")
 
-        # ---- INIT SESSION STATE ----
-        if "show_add_leave" not in st.session_state:
-            st.session_state.show_add_leave = False
+    student_service = StudentService()
+    attendance_service = AttendanceService()
 
-        # ---- ADD LEAVE BUTTON ----
-        col1, col2 = st.columns([1, 5])
-        with col1:
-            if st.button("➕ Add Leave"):
-                st.session_state.show_add_leave = True
-                st.experimental_rerun()
+    class_divisions = student_service.get_class_divisions()
 
-        # ---- ADD LEAVE FORM ----
-        if st.session_state.show_add_leave:
+    if not class_divisions:
+        UIComponents.render_warning_message("⚠️ No students found. Please ask admin to add students.")
+    else:
+        class_div_list = [f"Class {c[0]} - {c[1]}" for c in class_divisions]
+        selected_class_div = st.selectbox(
+            "Select Class",
+            class_div_list,
+            label_visibility="collapsed"
+        )
 
-            with st.container(border=True):
-                st.markdown("### Add Leave Form")
+        selected_class, selected_division = selected_class_div.replace("Class ", "").split(" - ")
 
-                # ---------- CLASS ----------
-                conn = get_connection()
-                classes = [c[0] for c in conn.execute(
-                    "SELECT DISTINCT class FROM students"
-                ).fetchall()]
-                conn.close()
+        UIComponents.render_divider()
 
-                selected_class = st.selectbox(
-                    "Select Class",
-                    classes,
-                    key="leave_class"
-                )
+        # Upload classroom image
+        uploaded_file = st.file_uploader(
+            "📸 Classroom Photo",
+            type=["jpg", "jpeg", "png"],
+            label_visibility="collapsed"
+        )
 
-                # ---------- DIVISION ----------
-                conn = get_connection()
-                divisions = [d[0] for d in conn.execute(
-                    "SELECT DISTINCT division FROM students WHERE class=?",
-                    (selected_class,)
-                ).fetchall()]
-                conn.close()
+        if uploaded_file:
+            st.image(uploaded_file, use_column_width=True)
 
-                selected_division = st.selectbox(
-                    "Select Division",
-                    divisions,
-                    key="leave_division"
-                )
-
-                # ---------- STUDENTS (DYNAMIC) ----------
-                conn = get_connection()
-                students = [s[0] for s in conn.execute(
-                    "SELECT name FROM students WHERE class=? AND division=?",
-                    (selected_class, selected_division)
-                ).fetchall()]
-                conn.close()
+            if st.button("✅ Mark Attendance", use_container_width=True):
+                students = student_service.get_students_by_class_division(selected_class, selected_division)
 
                 if not students:
-                    st.warning("No students found for this class & division")
-                    student_choice = None
+                    UIComponents.render_warning_message("No students found for this class & division.")
                 else:
-                    student_choice = st.selectbox(
-                        "Select Student",
+                    success, count = attendance_service.mark_class_attendance(
                         students,
-                        key="leave_student"
+                        selected_class,
+                        selected_division
                     )
 
-                # ---------- DATE & TIME ----------
-                from_date = st.date_input(
-                    "From Date",
-                    value=st.session_state.get("leave_from_date", datetime.today()),
-                    key="leave_from_date"
-                )
-                from_time = st.time_input(
-                    "From Time",
-                    value=st.session_state.get("leave_from_time", datetime.now().time()),
-                    key="leave_from_time"
+                    if success:
+                        UIComponents.render_success_message(
+                            f"✅ Attendance marked for {count} students in Class {selected_class}-{selected_division} "
+                            f"on {date.today()}"
+                        )
+
+                        with st.expander("📋 View Marked Students", expanded=False):
+                            marked_data = [{"Student": name, "Status": "✅ Present"} for _, name in students]
+                            df_marked = pd.DataFrame(marked_data)
+                            st.dataframe(df_marked, use_container_width=True, hide_index=True)
+
+
+# ============================================================================
+# TEACHER DASHBOARD - REQUEST LEAVE TAB
+# ============================================================================
+
+def render_teacher_request_leave_tab():
+    """Render teacher leave request tab"""
+    UIComponents.render_section_title("Request Leave")
+
+    if "show_add_leave" not in st.session_state:
+        st.session_state.show_add_leave = False
+
+    student_service = StudentService()
+    leave_service = LeaveService()
+
+    # Request leave button
+    if UIComponents.render_add_button("➕ Request Leave"):
+        st.session_state.show_add_leave = True
+        st.experimental_rerun()
+
+    # Leave request form
+    if st.session_state.show_add_leave:
+        with st.expander("📋 Leave Request Form", expanded=True):
+            classes = student_service.get_classes()
+
+            if not classes:
+                UIComponents.render_warning_message("⚠️ No classes found")
+            else:
+                selected_class = st.selectbox(
+                    "Class",
+                    classes,
+                    key="leave_class",
+                    label_visibility="collapsed"
                 )
 
-                to_date = st.date_input(
-                    "To Date",
-                    value=st.session_state.get("leave_to_date", datetime.today()),
-                    key="leave_to_date"
-                )
-                to_time = st.time_input(
-                    "To Time",
-                    value=st.session_state.get("leave_to_time", datetime.now().time()),
-                    key="leave_to_time"
+                divisions = student_service.get_divisions_for_class(selected_class)
+                selected_division = st.selectbox(
+                    "Division",
+                    divisions,
+                    key="leave_division",
+                    label_visibility="collapsed"
                 )
 
-                # ---------- ACTION BUTTONS ----------
-                col1, col2 = st.columns(2)
+                students = student_service.get_students_by_class_division(selected_class, selected_division)
+                student_names = [s[1] for s in students]
 
-                with col1:
-                    if st.button("💾 Save Leave", use_container_width=True):
-                        if not student_choice:
-                            st.error("Please select a student")
-                        else:
+                if not student_names:
+                    UIComponents.render_warning_message("⚠️ No students found for this class & division")
+                else:
+                    student_choice = st.selectbox(
+                        "Student Name",
+                        student_names,
+                        key="leave_student",
+                        label_visibility="collapsed"
+                    )
+
+                    # Date & time selection
+                    st.markdown("**Leave Duration:**")
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+                        from_date = st.date_input(
+                            "From Date",
+                            value=st.session_state.get("leave_from_date", datetime.today()),
+                            key="leave_from_date",
+                            label_visibility="collapsed"
+                        )
+
+                    with col2:
+                        from_time = st.time_input(
+                            "From Time",
+                            value=st.session_state.get("leave_from_time", datetime.now().time()),
+                            key="leave_from_time",
+                            label_visibility="collapsed"
+                        )
+
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+                        to_date = st.date_input(
+                            "To Date",
+                            value=st.session_state.get("leave_to_date", datetime.today()),
+                            key="leave_to_date",
+                            label_visibility="collapsed"
+                        )
+
+                    with col2:
+                        to_time = st.time_input(
+                            "To Time",
+                            value=st.session_state.get("leave_to_time", datetime.now().time()),
+                            key="leave_to_time",
+                            label_visibility="collapsed"
+                        )
+
+                    UIComponents.render_divider()
+
+                    # Action buttons
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+                        if st.button("✅ Submit", use_container_width=True):
                             leave_from = datetime.combine(from_date, from_time)
                             leave_to = datetime.combine(to_date, to_time)
 
-                            if leave_to <= leave_from:
-                                st.error("To Date/Time must be after From Date/Time")
-                            else:
-                                conn = get_connection()
-                                c = conn.cursor()
-                                c.execute("""
-                                    INSERT INTO leave_records
-                                    (student_name, class, division, leave_from, leave_to)
-                                    VALUES (?, ?, ?, ?, ?)
-                                """, (
-                                    student_choice,
-                                    selected_class,
-                                    selected_division,
-                                    leave_from.isoformat(),
-                                    leave_to.isoformat()
-                                ))
-                                conn.commit()
-                                conn.close()
+                            success, message = leave_service.add_leave_request(
+                                student_choice,
+                                selected_class,
+                                selected_division,
+                                leave_from,
+                                leave_to
+                            )
 
-                                # ---------- RESET ----------
+                            if success:
                                 for key in list(st.session_state.keys()):
                                     if key.startswith("leave_"):
                                         del st.session_state[key]
 
                                 st.session_state.show_add_leave = False
-                                st.success("✅ Leave record added successfully")
+                                UIComponents.render_success_message("✅ Leave request submitted successfully")
                                 st.experimental_rerun()
+                            else:
+                                UIComponents.render_error_message(f"❌ {message}")
 
-                with col2:
-                    if st.button("❌ Cancel", use_container_width=True):
-                        for key in list(st.session_state.keys()):
-                            if key.startswith("leave_"):
-                                del st.session_state[key]
+                    with col2:
+                        if st.button("❌ Cancel", use_container_width=True):
+                            for key in list(st.session_state.keys()):
+                                if key.startswith("leave_"):
+                                    del st.session_state[key]
 
-                        st.session_state.show_add_leave = False
-                        st.experimental_rerun()
+                            st.session_state.show_add_leave = False
+                            st.experimental_rerun()
 
-        # ---------- Leave Reports Table ----------
-        st.markdown("### Leave Reports")
+    # Display leave records
+    UIComponents.render_subsection_title("📋 My Leave Requests")
 
-        conn = get_connection()
-        df_leave = pd.read_sql("SELECT * FROM leave_records", conn)
-        conn.close()
+    leave_service = LeaveService()
+    df_leave = leave_service.get_all_leave_records()
 
-        if df_leave.empty:
-            st.info("No leave records found.")
-        else:
-            student_filter = st.selectbox(
-                "Filter by Student",
-                ["All"] + sorted(df_leave["student_name"].unique().tolist()),
-                key="filter_student"
-            )
+    if df_leave.empty:
+        UIComponents.render_info_message("📭 No leave records found.")
+    else:
+        st.dataframe(df_leave, use_container_width=True, hide_index=True)
 
-            class_filter = st.selectbox(
+
+# ============================================================================
+# TEACHER DASHBOARD - VIEW ATTENDANCE TAB
+# ============================================================================
+
+def render_teacher_view_attendance_tab():
+    """Render teacher view attendance tab"""
+    UIComponents.render_section_title("Attendance Records")
+
+    attendance_service = AttendanceService()
+    df_attendance = attendance_service.filter_attendance()
+
+    if df_attendance.empty:
+        UIComponents.render_info_message("📭 No attendance records found yet.")
+    else:
+        col1, col2 = st.columns(2)
+
+        with col1:
+            selected_class = st.selectbox(
                 "Filter by Class",
-                ["All"] + sorted(df_leave["class"].unique().tolist()),
-                key="filter_class"
+                ["All"] + sorted(df_attendance["class"].unique().tolist()),
+                key="view_class"
             )
 
-            df_filtered = df_leave.copy()
-            if student_filter != "All":
-                df_filtered = df_filtered[df_filtered["student_name"] == student_filter]
-            if class_filter != "All":
-                df_filtered = df_filtered[df_filtered["class"] == class_filter]
+        with col2:
+            selected_date = st.selectbox(
+                "Filter by Date",
+                ["All"] + sorted(df_attendance["date"].unique().tolist(), reverse=True),
+                key="view_date"
+            )
 
-            st.dataframe(df_filtered, use_container_width=True)
+        # Apply filters
+        df_filtered = attendance_service.filter_attendance(selected_class, selected_date)
 
-    # ---------- TAB 3: View Attendance ----------
-    with tab3:
-        st.subheader("Attendance Records")
-        conn = get_connection()
-        df_attendance = pd.read_sql("SELECT * FROM attendance", conn)
-        conn.close()
-        st.dataframe(df_attendance)
+        UIComponents.render_subsection_title("📋 Records")
+        st.dataframe(df_filtered, use_container_width=True, hide_index=True)
+
+
+# ============================================================================
+# TEACHER DASHBOARD
+# ============================================================================
+
+def render_teacher_dashboard():
+    """Render teacher dashboard"""
+    if st.session_state.logged_in and st.session_state.role == "teacher":
+        UIComponents.render_dashboard_header("👩‍🏫 Teacher Panel", logout)
+
+        tab1, tab2, tab3 = st.tabs(["📝 Mark Attendance", "🗓️ Request Leave", "📊 My Records"])
+
+        with tab1:
+            render_teacher_mark_attendance_tab()
+
+        with tab2:
+            render_teacher_request_leave_tab()
+
+        with tab3:
+            render_teacher_view_attendance_tab()
+
+
+# ============================================================================
+# MAIN APPLICATION
+# ============================================================================
+
+def main():
+    """Main application entry point"""
+    initialize_app()
+    init_session_state()
+
+    if not st.session_state.logged_in:
+        render_login_page()
+    elif st.session_state.role == "admin":
+        render_admin_dashboard()
+    elif st.session_state.role == "teacher":
+        render_teacher_dashboard()
+
+
+if __name__ == "__main__":
+    main()
 
